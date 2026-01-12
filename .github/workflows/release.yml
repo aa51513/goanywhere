@@ -1,0 +1,138 @@
+# This workflow will build a golang project
+# For more information see: https://docs.github.com/en/actions/automating-builds-and-tests/building-and-testing-go
+
+name: Go
+
+on:
+  push:
+    tags: [ "v*" ]
+
+jobs:
+  build:
+    name: Build for ${{ matrix.os }}-${{ matrix.arch }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # Linux
+          - os: linux
+            arch: amd64
+            goos: linux
+            goarch: amd64
+          - os: linux
+            arch: arm64
+            goos: linux
+            goarch: arm64
+          - os: linux
+            arch: arm
+            goos: linux
+            goarch: arm
+            goarm: 7
+          
+          # Windows
+          - os: windows
+            arch: amd64
+            goos: windows
+            goarch: amd64
+            ext: .exe
+          - os: windows
+            arch: arm64
+            goos: windows
+            goarch: arm64
+            ext: .exe
+          
+          # macOS
+          - os: darwin
+            arch: amd64
+            goos: darwin
+            goarch: amd64
+          - os: darwin
+            arch: arm64
+            goos: darwin
+            goarch: arm64
+          
+          # FreeBSD
+          - os: freebsd
+            arch: amd64
+            goos: freebsd
+            goarch: amd64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21' # 使用你需要的 Go 版本
+
+      - name: Get dependencies
+        run: go mod download
+
+      - name: Build
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          GOARM: ${{ matrix.goarm }}
+          CGO_ENABLED: 0
+        run: |
+          # 构建二进制文件
+          OUTPUT_NAME="goanywhere-${{ matrix.os }}-${{ matrix.arch }}${{ matrix.ext }}"
+          go build -ldflags="-s -w" -o "$OUTPUT_NAME" .
+          
+          # 压缩文件
+          if [ "${{ matrix.os }}" = "windows" ]; then
+            zip "${OUTPUT_NAME}.zip" "$OUTPUT_NAME"
+          else
+            tar czf "${OUTPUT_NAME}.tar.gz" "$OUTPUT_NAME"
+          fi
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: goanywhere-${{ matrix.os }}-${{ matrix.arch }}
+          path: |
+            *.tar.gz
+            *.zip
+          retention-days: 5
+
+  release:
+    name: Create Release
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Display structure of downloaded files
+        run: ls -R artifacts
+
+      - name: Prepare release files
+        run: |
+          mkdir -p release
+          find artifacts -type f \( -name "*.tar.gz" -o -name "*.zip" \) -exec mv {} release/ \;
+          ls -lh release/
+
+      - name: Generate checksums
+        run: |
+          cd release
+          sha256sum * > checksums.txt
+          cat checksums.txt
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          files: release/*
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
